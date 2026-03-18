@@ -1,0 +1,13 @@
+{
+  "fields": 21,
+  "type": "Excel",
+  "updatedAt": "2026-03-17",
+  "columns": [
+    "Matric Number",
+    "Surname",
+    "First Name",
+    "Programme",
+    "Department",
+    "Faculty"
+  ]
+}

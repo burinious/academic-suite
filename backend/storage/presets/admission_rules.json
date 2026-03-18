@@ -1,0 +1,20 @@
+[
+  {
+    "name": "UTME Score Threshold",
+    "rule_type": "threshold",
+    "field": "utme_score",
+    "operator": ">=",
+    "value": 180,
+    "status": "Active",
+    "message": "UTME score must be at least 180."
+  },
+  {
+    "name": "Science Subjects",
+    "rule_type": "subject_requirement",
+    "field": "subjects",
+    "operator": "contains_all",
+    "value": ["english", "mathematics"],
+    "status": "Active",
+    "message": "English and Mathematics are compulsory."
+  }
+]

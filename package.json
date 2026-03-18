@@ -1,0 +1,13 @@
+{
+  "name": "academic-data-processing-suite",
+  "private": true,
+  "scripts": {
+    "dev": "bash ./scripts/start-dev.sh",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "backend:dev": "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --app-dir backend",
+    "desktop": "npm --prefix frontend run desktop"
+  },
+  "dependencies": {
+    "firebase": "^12.10.0"
+  }
+}
