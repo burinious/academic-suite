@@ -28,6 +28,7 @@ class AuthSessionStateResponse(BaseModel):
 
 class AuthStatusResponse(BaseModel):
     has_users: bool
+    auth_provider: Literal["local", "firebase"] = "local"
 
 
 class AuthRegisterRequest(BaseModel):

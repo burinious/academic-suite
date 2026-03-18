@@ -20,45 +20,57 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
-  const [hasUsers, setHasUsers] = useState(firebaseEnabled);
+  const [hasUsers, setHasUsers] = useState(false);
+  const [authProvider, setAuthProvider] = useState("local");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let active = true;
     let unsubscribe = () => {};
 
-    if (firebaseEnabled) {
-      const auth = getFirebaseAuth();
-
-      setAuthTokenProvider(async () => {
-        if (!auth?.currentUser) {
-          return null;
-        }
-        return auth.currentUser.getIdToken();
-      });
-
-      unsubscribe = onAuthStateChanged(auth, async (user) => {
-        if (!active) {
-          return;
-        }
-        setCurrentUser(mapFirebaseUser(user));
-        setReady(true);
-      });
-
-      return () => {
-        active = false;
-        setAuthTokenProvider(null);
-        unsubscribe();
-      };
-    }
+    const handleUnauthorized = () => {
+      if (!active) {
+        return;
+      }
+      setCurrentUser(null);
+    };
 
     const initialize = async () => {
+      let waitingForFirebaseState = false;
+
       try {
         const status = await getAuthStatus();
         if (!active) {
           return;
         }
+
+        const resolvedProvider = firebaseEnabled && status.auth_provider === "firebase" ? "firebase" : "local";
+        setAuthProvider(resolvedProvider);
         setHasUsers(Boolean(status.has_users));
+
+        if (resolvedProvider === "firebase") {
+          waitingForFirebaseState = true;
+          const auth = getFirebaseAuth();
+
+          setAuthTokenProvider(async () => {
+            if (!auth?.currentUser) {
+              return null;
+            }
+            return auth.currentUser.getIdToken();
+          });
+
+          unsubscribe = onAuthStateChanged(auth, (user) => {
+            if (!active) {
+              return;
+            }
+            setCurrentUser(mapFirebaseUser(user));
+            setReady(true);
+          });
+
+          return;
+        }
+
+        setAuthTokenProvider(null);
 
         try {
           const session = await getCurrentUser();
@@ -66,24 +78,17 @@ export function AuthProvider({ children }) {
             return;
           }
           setCurrentUser(session?.user || null);
-        } catch (error) {
+        } catch {
           if (!active) {
             return;
           }
           setCurrentUser(null);
         }
       } finally {
-        if (active) {
+        if (active && !waitingForFirebaseState) {
           setReady(true);
         }
       }
-    };
-
-    const handleUnauthorized = () => {
-      if (!active) {
-        return;
-      }
-      setCurrentUser(null);
     };
 
     initialize();
@@ -101,9 +106,9 @@ export function AuthProvider({ children }) {
       ready,
       currentUser,
       hasUsers,
-      authProvider: firebaseEnabled ? "firebase" : "local",
+      authProvider,
       register: async ({ name, email, password }) => {
-        if (firebaseEnabled) {
+        if (authProvider === "firebase") {
           const auth = getFirebaseAuth();
           const credentials = await createUserWithEmailAndPassword(auth, email, password);
           if (name.trim()) {
@@ -124,7 +129,7 @@ export function AuthProvider({ children }) {
         return session.user;
       },
       login: async ({ email, password }) => {
-        if (firebaseEnabled) {
+        if (authProvider === "firebase") {
           const auth = getFirebaseAuth();
           const credentials = await signInWithEmailAndPassword(auth, email, password);
           const user = mapFirebaseUser(credentials.user);
@@ -137,7 +142,7 @@ export function AuthProvider({ children }) {
         return session.user;
       },
       logout: async () => {
-        if (firebaseEnabled) {
+        if (authProvider === "firebase") {
           const auth = getFirebaseAuth();
           await signOut(auth);
           setCurrentUser(null);
@@ -148,7 +153,7 @@ export function AuthProvider({ children }) {
         setCurrentUser(null);
       },
     }),
-    [currentUser, hasUsers, ready],
+    [authProvider, currentUser, hasUsers, ready],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

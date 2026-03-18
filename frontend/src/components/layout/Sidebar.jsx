@@ -28,12 +28,15 @@ export const navigationItems = [
 
 export function Sidebar() {
   return (
-    <aside className="glass-panel flex h-full w-full max-w-[300px] flex-col rounded-none border-r border-white/20 bg-slate-950 px-5 py-6 text-white shadow-none lg:rounded-[0_32px_32px_0]">
+    <aside className="flex h-full w-full max-w-[300px] flex-col rounded-none border-r border-slate-900/70 bg-[linear-gradient(180deg,#020617_0%,#081426_42%,#0f172a_100%)] px-5 py-6 text-white shadow-[18px_0_48px_rgba(2,6,23,0.26)] lg:rounded-[0_32px_32px_0]">
       <div className="rounded-[28px] bg-gradient-to-br from-sky-500 via-cyan-500 to-teal-400 p-[1px]">
-        <div className="rounded-[27px] bg-slate-950/95 px-5 py-5">
+        <div className="rounded-[27px] bg-slate-950/96 px-5 py-5">
           <p className="text-xs uppercase tracking-[0.24em] text-sky-200">Academic Ops</p>
-          <h1 className="mt-3 font-display text-2xl font-bold">Academic Data Processing Suite</h1>
-          <p className="mt-3 text-sm text-slate-300">
+          <h1 className="mt-3 font-display text-[1.75rem] font-bold leading-tight text-white">
+            <span className="block">Academic Data</span>
+            <span className="block text-sky-100">Processing Suite</span>
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-slate-300">
             Premium data operations cockpit for cleanup, validation, splitting, and academic record workflows.
           </p>
         </div>
@@ -45,19 +48,19 @@ export function Sidebar() {
             to={item.to}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white",
-                isActive && "bg-white/10 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]",
+                "flex items-start gap-3 rounded-2xl border border-transparent px-4 py-3 text-sm font-medium text-slate-300 transition hover:border-white/10 hover:bg-white/8 hover:text-white",
+                isActive && "border-white/12 bg-white/12 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]",
               )
             }
           >
-            <item.icon className="h-4 w-4" />
-            <span>{item.label}</span>
+            <item.icon className="mt-0.5 h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 whitespace-normal leading-5">{item.label}</span>
           </NavLink>
         ))}
       </nav>
-      <div className="mt-auto rounded-[24px] border border-white/10 bg-white/5 p-4">
+      <div className="mt-auto rounded-[24px] border border-white/10 bg-white/5 p-4 backdrop-blur-sm">
         <p className="text-xs uppercase tracking-[0.18em] text-sky-200">Ready for Files</p>
-        <p className="mt-2 text-sm text-slate-300">
+        <p className="mt-2 text-sm leading-6 text-slate-300">
           Shared upload, preview, mapping, validation, and export services are wired for CSV and XLSX flows.
         </p>
       </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Activity, FileSpreadsheet, Layers3, ShieldAlert } from "lucide-react";
 import {
   Area,
@@ -17,16 +18,70 @@ import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import { getDashboardSummary } from "@/lib/api";
 
 const icons = [FileSpreadsheet, Activity, Layers3, ShieldAlert];
+const quickActions = [
+  {
+    label: "Split records by faculty",
+    description: "Jump into the splitter workflow with shared upload, preview, and export services.",
+    to: "/admission-splitter",
+  },
+  {
+    label: "Map record fields for export",
+    description: "Open Sort Machine to upload a dataset, clean fields, and rename export headers.",
+    to: "/sort-machine",
+  },
+  {
+    label: "Evaluate confirmation rules",
+    description: "Review rule-based admission checks with the confirmation workbench.",
+    to: "/admission-confirmation",
+  },
+  {
+    label: "Launch sort workflow preset",
+    description: "Go straight to Sort Machine presets and run the reusable export flow.",
+    to: "/sort-machine",
+  },
+];
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const [summary, setSummary] = useState(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    getDashboardSummary().then(setSummary);
+    let active = true;
+
+    getDashboardSummary()
+      .then((data) => {
+        if (!active) {
+          return;
+        }
+        setSummary(data);
+        setError("");
+      })
+      .catch((runtimeError) => {
+        if (!active) {
+          return;
+        }
+        setError(runtimeError.message || "Dashboard data could not be loaded.");
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  if (!summary) {
+  if (!summary && !error) {
     return <div className="py-20 text-center text-slate-500">Loading dashboard...</div>;
+  }
+
+  if (!summary && error) {
+    return (
+      <Card className="border border-rose-200 bg-rose-50/90">
+        <CardTitle>Dashboard unavailable</CardTitle>
+        <CardDescription className="mt-2 text-rose-700">
+          {error}
+        </CardDescription>
+      </Card>
+    );
   }
 
   return (
@@ -37,8 +92,10 @@ export function DashboardPage() {
         description="Monitor processing activity, spot validation risk early, and move between cleanup, splitting, confirmation, and transformation tasks without losing data context."
         actions={
           <>
-            <Button>Upload New Dataset</Button>
-            <Button variant="outline">Open Export Queue</Button>
+            <Button onClick={() => navigate("/sort-machine")}>Upload New Dataset</Button>
+            <Button variant="outline" onClick={() => navigate("/export-history")}>
+              Open Export Queue
+            </Button>
           </>
         }
       />
@@ -121,18 +178,15 @@ export function DashboardPage() {
             Start common academic workflows with shared validation and export logic.
           </CardDescription>
           <div className="mt-6 grid gap-4 md:grid-cols-2">
-            {[
-              "Split records by faculty",
-              "Map record fields for export",
-              "Evaluate confirmation rules",
-              "Launch sort workflow preset",
-            ].map((label) => (
+            {quickActions.map((action) => (
               <button
-                key={label}
+                key={action.label}
+                type="button"
+                onClick={() => navigate(action.to)}
                 className="rounded-[24px] border border-slate-200 bg-white/80 p-5 text-left transition hover:-translate-y-1 hover:border-sky-200 hover:bg-sky-50"
               >
-                <p className="font-semibold text-slate-900">{label}</p>
-                <p className="mt-2 text-sm text-slate-500">Shared upload, preview, and export services included.</p>
+                <p className="font-semibold text-slate-900">{action.label}</p>
+                <p className="mt-2 text-sm text-slate-500">{action.description}</p>
               </button>
             ))}
           </div>

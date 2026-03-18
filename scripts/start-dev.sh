@@ -8,6 +8,23 @@ BACKEND_ENV_FILE="$BACKEND_DIR/.env"
 BACKEND_LOG="$ROOT_DIR/backend.dev.log"
 FRONTEND_LOG="$ROOT_DIR/frontend.dev.log"
 
+kill_listeners_on_port() {
+  local port="$1"
+  local pids
+
+  pids="$(netstat -ano -p tcp 2>/dev/null | tr -d '\r' | grep ":$port " | grep LISTENING | awk '{print $5}' | sort -u || true)"
+
+  if [[ -z "$pids" ]]; then
+    return
+  fi
+
+  while IFS= read -r pid; do
+    if [[ -n "$pid" ]]; then
+      taskkill.exe //PID "$pid" //F >/dev/null 2>&1 || true
+    fi
+  done <<< "$pids"
+}
+
 load_backend_env() {
   if [[ ! -f "$BACKEND_ENV_FILE" ]]; then
     return
@@ -36,6 +53,9 @@ load_backend_env() {
 }
 
 load_backend_env
+kill_listeners_on_port 8000
+kill_listeners_on_port 5173
+kill_listeners_on_port 5174
 
 echo "Starting backend..."
 (

@@ -82,7 +82,7 @@ export function getExportHistory() {
 }
 
 export function getAuthStatus() {
-  return request("/auth/status", { has_users: false });
+  return request("/auth/status", { has_users: false, auth_provider: "local" });
 }
 
 export async function getCurrentUser() {

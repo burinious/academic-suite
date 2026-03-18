@@ -40,7 +40,11 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 @router.get("/status", response_model=AuthStatusResponse)
 async def get_auth_status() -> dict:
-    return {"has_users": True if is_firebase_auth_enabled() else has_registered_users()}
+    firebase_ready = is_firebase_auth_enabled()
+    return {
+        "has_users": True if firebase_ready else has_registered_users(),
+        "auth_provider": "firebase" if firebase_ready else "local",
+    }
 
 
 @router.post("/register", response_model=AuthSessionResponse, status_code=status.HTTP_201_CREATED)
