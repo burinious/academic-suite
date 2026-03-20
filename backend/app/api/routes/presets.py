@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.models.schemas import PresetPayload
-from app.services.preset_service import list_rules, list_templates, save_rules, save_template
+from app.services.preset_service import delete_template, list_rules, list_templates, save_rules, save_template
 
 router = APIRouter(prefix="/presets", tags=["presets"])
 
@@ -16,6 +16,14 @@ async def get_templates() -> list[dict]:
 @router.post("/templates")
 async def create_template(payload: PresetPayload) -> dict:
     return save_template(payload.name, payload.data)
+
+
+@router.delete("/templates/{template_name}")
+async def remove_template(template_name: str) -> dict:
+    try:
+        return delete_template(template_name)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.get("/rules")

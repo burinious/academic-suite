@@ -1,0 +1,77 @@
+{
+  "name": "Admission single export",
+  "template_type": "sort_machine_preset",
+  "type": "Sort Machine Preset",
+  "category": "Sort Machine",
+  "description": "Reusable cleaning, column mapping, split, and export setup for repeated sorting jobs.",
+  "updatedAt": "2026-03-20",
+  "fields": 9,
+  "config": {
+    "trim_spaces": true,
+    "remove_blank_rows": false,
+    "standardize_case": "title",
+    "export_format": "xlsx",
+    "split_column": "",
+    "split_export_mode": "none",
+    "sort_by": "full_name",
+    "sort_direction": "asc"
+  },
+  "include_serial_number": true,
+  "keyword_input": "",
+  "column_settings": [
+    {
+      "kind": "source",
+      "source": "matric_number",
+      "target": "Matric Number",
+      "selected": true
+    },
+    {
+      "kind": "source",
+      "source": "full_name",
+      "target": "Full Name",
+      "selected": true
+    },
+    {
+      "kind": "source",
+      "source": "jamb_reg",
+      "target": "Jamb Reg",
+      "selected": true
+    },
+    {
+      "kind": "source",
+      "source": "level",
+      "target": "Level",
+      "selected": true
+    },
+    {
+      "kind": "source",
+      "source": "programme",
+      "target": "Programme",
+      "selected": true
+    },
+    {
+      "kind": "source",
+      "source": "gender",
+      "target": "Gender",
+      "selected": true
+    },
+    {
+      "kind": "source",
+      "source": "state_of_origin",
+      "target": "State Of Origin",
+      "selected": true
+    },
+    {
+      "kind": "source",
+      "source": "lga",
+      "target": "Lga",
+      "selected": true
+    },
+    {
+      "kind": "blank",
+      "source": null,
+      "target": "SIGNATURE & DATE",
+      "selected": true
+    }
+  ]
+}

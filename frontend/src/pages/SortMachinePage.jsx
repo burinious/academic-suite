@@ -1,13 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  BookmarkPlus,
-  CheckCircle2,
+  BookOpenCheck,
+  ChevronRight,
   Download,
-  RotateCcw,
-  ScanSearch,
-  Sparkles,
-  WandSparkles,
-  Workflow,
+  MousePointerClick,
 } from "lucide-react";
 import {
   buildDownloadUrl,
@@ -19,15 +16,9 @@ import {
   uploadFile,
   uploadSampleFile,
 } from "@/lib/api";
-import { ColumnWorkbench } from "@/components/shared/ColumnWorkbench";
-import { LoadingCard } from "@/components/shared/LoadingCard";
 import { ModuleHeader } from "@/components/shared/ModuleHeader";
-import { PreviewTable } from "@/components/shared/PreviewTable";
-import { UploadDropzone } from "@/components/shared/UploadDropzone";
+import { SortMachineWorkbench } from "@/components/sort-machine/SortMachineWorkbench";
 import { Button } from "@/components/ui/button";
-import { Card, CardDescription, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
 
 const initialConfig = {
   trim_spaces: true,
@@ -36,7 +27,19 @@ const initialConfig = {
   export_format: "xlsx",
   split_column: "",
   split_export_mode: "none",
+  sort_by: "",
+  sort_direction: "asc",
 };
+
+const GUIDE_STORAGE_KEY = "adps:sort-machine-guide-seen";
+const FULL_PREVIEW_BATCH_SIZE = 200;
+
+const defaultFilter = () => ({
+  id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+  column: "",
+  operator: "equals",
+  value: "",
+});
 
 function humanizeHeader(value) {
   return value
@@ -48,13 +51,26 @@ function humanizeHeader(value) {
 
 function createColumnState(columns) {
   return columns.map((column) => ({
+    id: `source:${column}`,
     source: column,
     target: humanizeHeader(column),
     selected: true,
+    kind: "source",
   }));
 }
 
-function createSortPresetPayload(config, keywordInput, columns) {
+function createBlankHeadingColumn() {
+  const id = `blank:${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  return {
+    id,
+    source: null,
+    target: "New Heading",
+    selected: true,
+    kind: "blank",
+  };
+}
+
+function createSortPresetPayload(config, keywordInput, columns, includeSerialNumber) {
   return {
     template_type: "sort_machine_preset",
     type: "Sort Machine Preset",
@@ -63,8 +79,10 @@ function createSortPresetPayload(config, keywordInput, columns) {
     updatedAt: new Date().toISOString().slice(0, 10),
     fields: columns.filter((column) => column.selected).length,
     config,
+    include_serial_number: includeSerialNumber,
     keyword_input: keywordInput,
     column_settings: columns.map((column) => ({
+      kind: column.kind || "source",
       source: column.source,
       target: column.target,
       selected: column.selected,
@@ -73,8 +91,12 @@ function createSortPresetPayload(config, keywordInput, columns) {
 }
 
 function applySortPresetToState(preset, currentColumns) {
-  const savedColumns = new Map((preset.column_settings || []).map((column) => [column.source, column]));
-  const nextColumns = currentColumns.map((column) => {
+  const savedColumns = new Map(
+    (preset.column_settings || [])
+      .filter((column) => (column.kind || "source") === "source")
+      .map((column) => [column.source, column]),
+  );
+  const nextSourceColumns = currentColumns.map((column) => {
     const saved = savedColumns.get(column.source);
     if (!saved) {
       return column;
@@ -86,6 +108,15 @@ function applySortPresetToState(preset, currentColumns) {
       target: saved.target?.trim() ? saved.target : column.target,
     };
   });
+  const customColumns = (preset.column_settings || [])
+    .filter((column) => (column.kind || "source") === "blank")
+    .map((column) => ({
+      ...createBlankHeadingColumn(),
+      target: column.target?.trim() || "New Heading",
+      selected: column.selected ?? true,
+      kind: "blank",
+    }));
+  const nextColumns = [...nextSourceColumns, ...customColumns];
 
   const nextConfigBase = { ...initialConfig, ...(preset.config || {}) };
   const availableSplitTargets = nextColumns
@@ -94,6 +125,7 @@ function applySortPresetToState(preset, currentColumns) {
 
   return {
     columns: nextColumns,
+    includeSerialNumber: Boolean(preset.include_serial_number),
     config: {
       ...nextConfigBase,
       split_column: availableSplitTargets.includes(nextConfigBase.split_column || "")
@@ -104,19 +136,130 @@ function applySortPresetToState(preset, currentColumns) {
   };
 }
 
+function applyClientFilters(rows, filters) {
+  return filters.reduce((currentRows, filter) => {
+    if (!filter.column || !filter.value.trim()) {
+      return currentRows;
+    }
+
+    return currentRows.filter((row) => {
+      const cellValue = String(row[filter.column] ?? "").trim();
+      if (filter.operator === "contains") {
+        return cellValue.toLowerCase().includes(filter.value.trim().toLowerCase());
+      }
+      if (filter.operator === "not_contains") {
+        const candidates = filter.value
+          .split(/[\n,;|]+/)
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean);
+        return !candidates.some((candidate) => cellValue.toLowerCase().includes(candidate));
+      }
+      if (filter.operator === "one_of") {
+        const candidates = filter.value
+          .split(/[\n,;|]+/)
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean);
+        return candidates.includes(cellValue.toLowerCase());
+      }
+      if (filter.operator === "starts_with_one_of") {
+        const prefixes = filter.value
+          .split(/[\n,;|]+/)
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean);
+        return prefixes.some((prefix) => cellValue.toLowerCase().startsWith(prefix));
+      }
+      if (filter.operator === "max_digits") {
+        const maxDigits = Number(filter.value);
+        if (!Number.isFinite(maxDigits)) {
+          return true;
+        }
+        const digitLength = cellValue.replace(/\D/g, "").length;
+        return digitLength <= maxDigits;
+      }
+
+      return cellValue.toLowerCase() === filter.value.trim().toLowerCase();
+    });
+  }, rows);
+}
+
+function removeDeletedRows(rows, deletedRowIds) {
+  if (!deletedRowIds.length) {
+    return rows;
+  }
+
+  const deleted = new Set(deletedRowIds);
+  return rows.filter((row) => !deleted.has(row.__row_id));
+}
+
+function sortRows(rows, sortBy, sortDirection) {
+  if (!sortBy) {
+    return rows;
+  }
+
+  return [...rows].sort((left, right) => {
+    const leftValue = String(left[sortBy] ?? "").toLowerCase();
+    const rightValue = String(right[sortBy] ?? "").toLowerCase();
+    if (leftValue === rightValue) {
+      return 0;
+    }
+    const base = leftValue > rightValue ? 1 : -1;
+    return sortDirection === "desc" ? -base : base;
+  });
+}
+
+function applyColumnLayout(rows, columns, includeSerialNumber = false) {
+  const activeColumns = columns.filter((column) => column.selected);
+  if (!activeColumns.length && !includeSerialNumber) {
+    return [];
+  }
+
+  return rows.map((row, index) => {
+    const shapedRow = {
+      __row_id: row.__row_id,
+    };
+
+    if (includeSerialNumber) {
+      shapedRow["S/N"] = index + 1;
+    }
+
+    activeColumns.forEach((column) => {
+      if (column.kind === "serial_number") {
+        return;
+      }
+      const heading =
+        column.target.trim() ||
+        (column.kind === "blank" ? `Heading ${index + 1}` : humanizeHeader(column.source || ""));
+      shapedRow[heading] = column.kind === "blank" ? "" : row[column.source] ?? "";
+    });
+
+    return shapedRow;
+  });
+}
+
 export function SortMachinePage() {
+  const uploadSectionRef = useRef(null);
+  const cleanSectionRef = useRef(null);
+  const columnsSectionRef = useRef(null);
+  const exportSectionRef = useRef(null);
   const [fileMeta, setFileMeta] = useState(null);
   const [sheets, setSheets] = useState([]);
   const [sheetName, setSheetName] = useState("");
   const [preview, setPreview] = useState([]);
+  const [fullPreviewRows, setFullPreviewRows] = useState([]);
+  const [fullPreviewTotalRows, setFullPreviewTotalRows] = useState(0);
+  const [fullPreviewHasMore, setFullPreviewHasMore] = useState(false);
   const [resultPreview, setResultPreview] = useState([]);
   const [columns, setColumns] = useState([]);
+  const [includeSerialNumber, setIncludeSerialNumber] = useState(false);
   const [headerAnalysis, setHeaderAnalysis] = useState([]);
   const [config, setConfig] = useState(initialConfig);
+  const [filters, setFilters] = useState([defaultFilter()]);
+  const [deletedRowIds, setDeletedRowIds] = useState([]);
   const [keywordInput, setKeywordInput] = useState("");
   const [status, setStatus] = useState({
     uploading: false,
     preview: false,
+    fullPreview: false,
     processing: false,
     loadingPresets: false,
     savingPreset: false,
@@ -127,6 +270,8 @@ export function SortMachinePage() {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateName, setSelectedTemplateName] = useState("");
   const [templateNameInput, setTemplateNameInput] = useState("");
+  const [showGuide, setShowGuide] = useState(false);
+  const [guideIndex, setGuideIndex] = useState(0);
 
   const sortMachineTemplates = useMemo(
     () => templates.filter((template) => template.template_type === "sort_machine_preset"),
@@ -148,6 +293,63 @@ export function SortMachinePage() {
     [columns, fileMeta, job, preview.length],
   );
 
+  const selectedColumnsCount = useMemo(
+    () => columns.filter((column) => column.selected).length,
+    [columns],
+  );
+
+  const removedKeywordCount = useMemo(
+    () =>
+      keywordInput
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean).length,
+    [keywordInput],
+  );
+
+  const splitTargetLabel = config.split_column || "Not set";
+  const splitModeLabel = config.split_export_mode === "none" ? "Single output" : config.split_export_mode.replace(/_/g, " ");
+  const currentSheetLabel = sheetName && sheetName !== "csv_data" ? sheetName : "CSV";
+  const filterOptions = useMemo(
+    () =>
+      columns
+        .filter((column) => column.kind === "source")
+        .map((column) => ({
+          value: column.source,
+          label: column.target.trim() || humanizeHeader(column.source),
+        })),
+    [columns],
+  );
+  const activeFilters = useMemo(
+    () => filters.filter((filter) => filter.column && filter.value.trim()),
+    [filters],
+  );
+  const quickPreviewRows = useMemo(
+    () =>
+      applyColumnLayout(
+        sortRows(removeDeletedRows(applyClientFilters(preview, filters), deletedRowIds), config.sort_by, config.sort_direction),
+        columns,
+        includeSerialNumber,
+      ),
+    [columns, config.sort_by, config.sort_direction, deletedRowIds, filters, includeSerialNumber, preview],
+  );
+  const shapedFullPreview = useMemo(
+    () => applyColumnLayout(removeDeletedRows(fullPreviewRows, deletedRowIds), columns, includeSerialNumber),
+    [columns, deletedRowIds, fullPreviewRows, includeSerialNumber],
+  );
+  const visibleFullPreviewColumns = useMemo(
+    () =>
+      shapedFullPreview[0]
+        ? Object.keys(shapedFullPreview[0]).filter((key) => !key.startsWith("__"))
+        : [
+            ...(includeSerialNumber ? ["S/N"] : []),
+            ...columns
+              .filter((column) => column.selected)
+              .map((column, index) => column.target.trim() || (column.kind === "blank" ? `Heading ${index + 1}` : humanizeHeader(column.source || ""))),
+          ],
+    [columns, includeSerialNumber, shapedFullPreview],
+  );
+
   useEffect(() => {
     const loadTemplates = async () => {
       setStatus((current) => ({ ...current, loadingPresets: true }));
@@ -162,6 +364,36 @@ export function SortMachinePage() {
     loadTemplates();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!window.localStorage.getItem(GUIDE_STORAGE_KEY)) {
+      setShowGuide(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    const activeTargets = columns
+      .filter((column) => column.selected && column.kind === "source")
+      .map((column) => column.target.trim() || humanizeHeader(column.source || ""));
+
+    if (config.split_column && !activeTargets.includes(config.split_column)) {
+      setConfig((current) => ({ ...current, split_column: "" }));
+    }
+
+    if (config.sort_by && !columns.some((column) => column.kind === "source" && column.source === config.sort_by)) {
+      setConfig((current) => ({ ...current, sort_by: "" }));
+    }
+  }, [columns, config.sort_by, config.split_column]);
+
+  const invalidateFullPreview = () => {
+    setFullPreviewRows([]);
+    setFullPreviewTotalRows(0);
+    setFullPreviewHasMore(false);
+  };
+
   const loadPreview = async (fileId, selectedSheet = "") => {
     setStatus((current) => ({ ...current, preview: true }));
     setError("");
@@ -171,9 +403,22 @@ export function SortMachinePage() {
       const data = await getFilePreview(fileId, resolvedSheet);
       setPreview(data.rows);
       setHeaderAnalysis(data.header_analysis || []);
+      invalidateFullPreview();
       setResultPreview([]);
       setJob(null);
       setColumns(createColumnState(data.columns));
+      setIncludeSerialNumber(false);
+      setDeletedRowIds([]);
+      setFilters((current) =>
+        current.map((filter, index) =>
+          index === 0
+            ? {
+                ...filter,
+                column: data.columns?.includes(filter.column) ? filter.column : data.columns?.[0] || "",
+              }
+            : filter,
+        ),
+      );
     } catch (runtimeError) {
       setError(runtimeError.message);
     } finally {
@@ -223,16 +468,90 @@ export function SortMachinePage() {
     }
   };
 
-  const handleToggleColumn = (source) => {
+  const handleToggleColumn = (columnId) => {
+    invalidateFullPreview();
     setColumns((current) =>
-      current.map((column) => (column.source === source ? { ...column, selected: !column.selected } : column)),
+      current.map((column) => (column.id === columnId ? { ...column, selected: !column.selected } : column)),
     );
   };
 
-  const handleRenameColumn = (source, target) => {
+  const handleRenameColumn = (columnId, target) => {
+    invalidateFullPreview();
     setColumns((current) =>
-      current.map((column) => (column.source === source ? { ...column, target } : column)),
+      current.map((column) => (column.id === columnId ? { ...column, target } : column)),
     );
+  };
+
+  const handleAddHeading = () => {
+    invalidateFullPreview();
+    setColumns((current) => [...current, createBlankHeadingColumn()]);
+    setNotice("Blank heading added. Rename it to shape the export.");
+  };
+
+  const handleToggleSerialNumber = () => {
+    invalidateFullPreview();
+    setIncludeSerialNumber((current) => !current);
+  };
+
+  const handleFilterChange = (id, field, value) => {
+    invalidateFullPreview();
+    setFilters((current) =>
+      current.map((filter) => (filter.id === id ? { ...filter, [field]: value } : filter)),
+    );
+  };
+
+  const handleAddFilter = () => {
+    invalidateFullPreview();
+    setFilters((current) => [...current, defaultFilter()]);
+  };
+
+  const handleRemoveFilter = (id) => {
+    invalidateFullPreview();
+    setFilters((current) => (current.length === 1 ? [defaultFilter()] : current.filter((filter) => filter.id !== id)));
+  };
+
+  const handleDeleteRow = (rowId) => {
+    setDeletedRowIds((current) => (current.includes(rowId) ? current : [...current, rowId]));
+  };
+
+  const handleResetPreviewEdits = () => {
+    setDeletedRowIds([]);
+    setNotice("Clean preview edits cleared. Removed rows are visible again.");
+  };
+
+  const handleLoadFullPreview = async (append = false) => {
+    if (!fileMeta) {
+      setError("Upload a file first before opening the cleaning preview.");
+      return;
+    }
+
+    setStatus((current) => ({ ...current, fullPreview: true }));
+    setError("");
+    try {
+      const response = await getFilePreview(
+        fileMeta.file_id,
+        sheetName && sheetName !== "csv_data" ? sheetName : undefined,
+        {
+          limit: FULL_PREVIEW_BATCH_SIZE,
+          offset: append ? fullPreviewRows.length : 0,
+          filters: activeFilters.map((filter) => ({
+            column: filter.column,
+            operator: filter.operator,
+            value: filter.value.trim(),
+          })),
+          sortBy: config.sort_by,
+          sortDirection: config.sort_direction,
+        },
+      );
+
+      setFullPreviewRows((current) => (append ? [...current, ...(response.rows || [])] : response.rows || []));
+      setFullPreviewTotalRows(response.total_rows || 0);
+      setFullPreviewHasMore(Boolean(response.has_more));
+    } catch (runtimeError) {
+      setError(runtimeError.message);
+    } finally {
+      setStatus((current) => ({ ...current, fullPreview: false }));
+    }
   };
 
   const handleApplyTemplate = () => {
@@ -248,10 +567,11 @@ export function SortMachinePage() {
       return;
     }
 
-    const nextState = applySortPresetToState(selectedTemplate, columns);
-    setColumns(nextState.columns);
-    setConfig(nextState.config);
-    setKeywordInput(nextState.keywordInput);
+      const nextState = applySortPresetToState(selectedTemplate, columns);
+      setColumns(nextState.columns);
+      setConfig(nextState.config);
+      setIncludeSerialNumber(nextState.includeSerialNumber);
+      setKeywordInput(nextState.keywordInput);
     setResultPreview([]);
     setJob(null);
     setError("");
@@ -265,8 +585,14 @@ export function SortMachinePage() {
       return;
     }
 
-    const resetColumns = createColumnState(columns.map((column) => column.source));
+    const resetColumns = createColumnState(
+      columns.filter((column) => column.kind === "source").map((column) => column.source),
+    );
     setConfig(initialConfig);
+    setIncludeSerialNumber(false);
+    setFilters([defaultFilter()]);
+    setDeletedRowIds([]);
+    invalidateFullPreview();
     setKeywordInput("");
     setColumns(resetColumns);
     setResultPreview([]);
@@ -294,7 +620,7 @@ export function SortMachinePage() {
     setNotice("");
 
     try {
-      await saveTemplate(displayName, createSortPresetPayload(config, keywordInput, columns));
+      await saveTemplate(displayName, createSortPresetPayload(config, keywordInput, columns, includeSerialNumber));
       const refreshedTemplates = await getTemplates();
       setTemplates(refreshedTemplates);
       setSelectedTemplateName(displayName);
@@ -318,11 +644,22 @@ export function SortMachinePage() {
     setError("");
     setNotice("");
 
+    const selectedSourceColumns = columns.filter((column) => column.selected && column.kind === "source");
     const selectedColumns = columns.filter((column) => column.selected);
-    const columnMapping = selectedColumns.map((column) => ({
+    const columnMapping = selectedSourceColumns.map((column) => ({
       source: column.source,
       target: column.target.trim() || humanizeHeader(column.source),
     }));
+    const exportColumns = [
+      ...(includeSerialNumber ? [{ source: null, target: "S/N", kind: "serial_number" }] : []),
+      ...selectedColumns.map((column, index) => ({
+        source: column.kind === "source" ? column.target.trim() || humanizeHeader(column.source || "") : null,
+        target:
+          column.target.trim() ||
+          (column.kind === "blank" ? `Heading ${index + 1}` : humanizeHeader(column.source || "")),
+        kind: column.kind,
+      })),
+    ];
 
     try {
       const response = await runSortMachine({
@@ -331,15 +668,23 @@ export function SortMachinePage() {
         export_format: config.export_format,
         split_column: config.split_column || null,
         split_export_mode: config.split_export_mode || "none",
+        sort_by: config.sort_by || null,
+        sort_direction: config.sort_direction || "asc",
         trim_spaces: config.trim_spaces,
         remove_blank_rows: config.remove_blank_rows,
         standardize_case: config.standardize_case,
+        filters: activeFilters.map((filter) => ({
+          column: filter.column,
+          operator: filter.operator,
+          value: filter.value.trim(),
+        })),
+        excluded_row_ids: deletedRowIds,
         remove_keywords: keywordInput
           .split(",")
           .map((value) => value.trim())
           .filter(Boolean),
         column_mapping: columnMapping,
-        export_columns: columnMapping.map((column) => column.target),
+        export_columns: exportColumns,
       });
       setResultPreview(response.preview);
       setJob(response.job);
@@ -351,6 +696,84 @@ export function SortMachinePage() {
     }
   };
 
+  const guideSteps = useMemo(
+    () => [
+      {
+        id: "upload",
+        title: "Start with a file",
+        body: "Upload a CSV/XLSX file or load the sample dataset. This unlocks preview, cleaning, column rename, and export controls.",
+        accent: "Upload unlocks the rest of the machine.",
+      },
+      {
+        id: "clean",
+        title: "Tune cleanup rules",
+        body: "Use the clean panel to trim spaces, standardize values, drop blank rows, and remove unwanted records by keyword.",
+        accent: "This is where messy data becomes workable.",
+      },
+      {
+        id: "columns",
+        title: "Control what leaves the system",
+        body: "Keep or drop columns and rename each export heading. Your final file shape is defined here.",
+        accent: "Editing happens after preview is loaded.",
+      },
+      {
+        id: "export",
+        title: "Split and export",
+        body: "Choose format, split mode, and run the export. When the job finishes, download the clean file or ZIP bundle.",
+        accent: "You can reopen this guide anytime from the header.",
+      },
+    ],
+    [],
+  );
+
+  const currentGuideStep = guideSteps[guideIndex];
+
+  const scrollToSection = (section) => {
+    const refMap = {
+      upload: uploadSectionRef,
+      clean: cleanSectionRef,
+      columns: columnsSectionRef,
+      export: exportSectionRef,
+    };
+
+    refMap[section]?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const openGuide = (section = null) => {
+    if (section) {
+      const matchingIndex = guideSteps.findIndex((step) => step.id === section);
+      if (matchingIndex >= 0) {
+        setGuideIndex(matchingIndex);
+      }
+    }
+    setShowGuide(true);
+  };
+
+  const closeGuide = (persist = true) => {
+    setShowGuide(false);
+    if (persist && typeof window !== "undefined") {
+      window.localStorage.setItem(GUIDE_STORAGE_KEY, "true");
+    }
+  };
+
+  const handleGuideAction = async () => {
+    const section = currentGuideStep?.id;
+    if (!section) {
+      return;
+    }
+
+    if (section === "upload" && !fileMeta) {
+      await handleUseSample();
+    }
+
+    scrollToSection(section);
+  };
+
+  const highlightSection = (section) =>
+    showGuide && currentGuideStep?.id === section
+      ? "rounded-[30px] ring-2 ring-sky-300 ring-offset-4 ring-offset-slate-50 transition"
+      : "";
+
   return (
     <div className="space-y-6">
       <ModuleHeader
@@ -359,6 +782,10 @@ export function SortMachinePage() {
         description="Tonight's working foundation lives here: upload, preview, clean, select columns, rename headers, save reusable presets, and export through one premium processing flow."
         actions={
           <>
+            <Button variant="outline" onClick={() => openGuide()}>
+              <BookOpenCheck className="mr-2 h-4 w-4" />
+              Guide Me
+            </Button>
             <Button onClick={handleRun} disabled={!fileMeta || status.processing}>
               {status.processing ? "Processing..." : "Run Export"}
             </Button>
@@ -374,331 +801,131 @@ export function SortMachinePage() {
         }
       />
 
-      <section className="grid gap-4 xl:grid-cols-4">
-        {activeSteps.map((step) => (
-          <Card
-            key={step.id}
-            className={`relative overflow-hidden ${step.done ? "border-sky-200 bg-sky-50/70" : ""}`}
+      <AnimatePresence>
+        {showGuide ? (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.98 }}
+            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            className="relative overflow-hidden rounded-[30px] border border-sky-200 bg-[linear-gradient(135deg,#eff6ff_0%,#f8fafc_52%,#ecfeff_100%)] p-6 shadow-[0_24px_60px_rgba(14,165,233,0.12)]"
           >
-            <div className="absolute right-0 top-0 h-20 w-20 rounded-full bg-white/70 blur-2xl" />
-            <div className="relative flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">{step.id}</p>
-                <p className="mt-3 font-display text-xl font-bold text-slate-950">{step.title}</p>
-                <p className="mt-2 text-sm text-slate-500">{step.detail}</p>
-              </div>
-              {step.done ? <CheckCircle2 className="h-5 w-5 text-sky-700" /> : <Workflow className="h-5 w-5 text-slate-400" />}
-            </div>
-          </Card>
-        ))}
-      </section>
-
-      {error ? (
-        <Card className="border border-rose-200 bg-rose-50/90">
-          <p className="text-sm font-medium text-rose-800">{error}</p>
-        </Card>
-      ) : null}
-
-      {!error && notice ? (
-        <Card className="border border-emerald-200 bg-emerald-50/90">
-          <p className="text-sm font-medium text-emerald-800">{notice}</p>
-        </Card>
-      ) : null}
-
-      <div className="grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">
-        <div className="space-y-6">
-          <UploadDropzone
-            title="Upload your academic file"
-            subtitle="Drag and drop CSV or Excel workbooks here. The workbench immediately prepares a preview and shared processing state."
-            onFileSelect={handleUpload}
-            onUseSample={handleUseSample}
-            selectedFileName={fileMeta?.filename}
-            loading={status.uploading}
-          />
-
-          <Card>
-            <div className="flex items-center gap-3">
-              <div className="rounded-2xl bg-sky-100 p-3 text-sky-700">
-                <BookmarkPlus className="h-5 w-5" />
-              </div>
-              <div>
-                <CardTitle>Reusable Sort Presets</CardTitle>
-                <CardDescription className="mt-1">
-                  Save the full cleaning, rename, split, and export setup for repeated sorting jobs.
-                </CardDescription>
-              </div>
-            </div>
-
-            <div className="mt-6 space-y-4">
-              <div>
-                <p className="mb-2 text-sm font-semibold text-slate-700">Saved Presets</p>
-                <Select
-                  value={selectedTemplateName}
-                  onChange={(event) => setSelectedTemplateName(event.target.value)}
-                  disabled={status.loadingPresets || !sortMachineTemplates.length}
-                >
-                  <option value="">
-                    {status.loadingPresets ? "Loading presets..." : sortMachineTemplates.length ? "Choose a saved preset" : "No saved presets yet"}
-                  </option>
-                  {sortMachineTemplates.map((template) => (
-                    <option key={template.name} value={template.name}>
-                      {template.name}
-                    </option>
+            <div className="absolute right-0 top-0 h-28 w-28 rounded-full bg-sky-200/60 blur-3xl" />
+            <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-2xl">
+                <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-sky-700">
+                  <MousePointerClick className="h-3.5 w-3.5" />
+                  In-System Guide
+                </div>
+                <h2 className="mt-4 font-display text-2xl font-bold text-slate-950">
+                  {guideIndex + 1}. {currentGuideStep.title}
+                </h2>
+                <p className="mt-3 text-sm leading-6 text-slate-600">{currentGuideStep.body}</p>
+                <p className="mt-3 text-sm font-semibold text-sky-700">{currentGuideStep.accent}</p>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {guideSteps.map((step, index) => (
+                    <button
+                      key={step.id}
+                      type="button"
+                      onClick={() => setGuideIndex(index)}
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        index === guideIndex
+                          ? "bg-slate-950 text-white"
+                          : "border border-slate-200 bg-white/80 text-slate-600 hover:border-sky-200 hover:text-sky-700"
+                      }`}
+                    >
+                      {step.title}
+                    </button>
                   ))}
-                </Select>
-                {selectedTemplate ? (
-                  <p className="mt-2 text-xs text-slate-500">
-                    {selectedTemplate.fields || 0} selected fields | updated {selectedTemplate.updatedAt || "recently"}
-                  </p>
-                ) : null}
+                </div>
               </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <Button variant="outline" onClick={handleApplyTemplate} disabled={!selectedTemplateName || !columns.length}>
-                  Apply Preset
+              <div className="flex flex-wrap gap-3">
+                <Button variant="outline" onClick={() => closeGuide(true)}>
+                  Hide Tips
                 </Button>
-                <Button variant="outline" onClick={handleResetWorkbench} disabled={!columns.length}>
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  Reset Setup
+                <Button variant="outline" onClick={handleGuideAction}>
+                  {currentGuideStep.id === "upload" && !fileMeta ? "Load Sample and Show Me" : "Jump To Feature"}
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (guideIndex === guideSteps.length - 1) {
+                      closeGuide(true);
+                      return;
+                    }
+                    setGuideIndex((current) => current + 1);
+                  }}
+                >
+                  {guideIndex === guideSteps.length - 1 ? "Finish Guide" : "Next Tip"}
+                  <ChevronRight className="ml-2 h-4 w-4" />
                 </Button>
               </div>
-
-              <div className="rounded-[22px] border border-slate-200 bg-white/75 p-4">
-                <p className="mb-2 text-sm font-semibold text-slate-700">Save Current Setup As</p>
-                <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                  <Input
-                    value={templateNameInput}
-                    onChange={(event) => setTemplateNameInput(event.target.value)}
-                    placeholder="Example: Faculty split and cleanup"
-                  />
-                  <Button onClick={handleSaveTemplate} disabled={status.savingPreset || !columns.length}>
-                    {status.savingPreset ? "Saving..." : "Save Preset"}
-                  </Button>
-                </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  Presets capture cleaning rules, keywords, column keep/drop choices, renamed headings, and split export settings.
-                </p>
-              </div>
             </div>
-          </Card>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
-          <Card>
-            <div className="flex items-center gap-3">
-              <div className="rounded-2xl bg-teal-100 p-3 text-teal-700">
-                <Sparkles className="h-5 w-5" />
-              </div>
-              <div>
-                <CardTitle>Cleaning Rules</CardTitle>
-                <CardDescription className="mt-1">
-                  Basic rules are ready tonight: trim spaces, drop blank rows, normalize case, and remove flagged keywords.
-                </CardDescription>
-              </div>
-            </div>
-            <div className="mt-6 space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="flex items-center gap-3 rounded-[20px] border border-slate-200 bg-white/75 px-4 py-4 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={config.trim_spaces}
-                    onChange={(event) => setConfig((current) => ({ ...current, trim_spaces: event.target.checked }))}
-                    className="h-4 w-4 rounded border-slate-300"
-                  />
-                  Trim extra spaces
-                </label>
-                <label className="flex items-center gap-3 rounded-[20px] border border-slate-200 bg-white/75 px-4 py-4 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={config.remove_blank_rows}
-                    onChange={(event) => setConfig((current) => ({ ...current, remove_blank_rows: event.target.checked }))}
-                    className="h-4 w-4 rounded border-slate-300"
-                  />
-                  Remove blank rows
-                </label>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <p className="mb-2 text-sm font-semibold text-slate-700">Case Standardization</p>
-                  <Select
-                    value={config.standardize_case}
-                    onChange={(event) => setConfig((current) => ({ ...current, standardize_case: event.target.value }))}
-                  >
-                    <option value="none">Keep Original</option>
-                    <option value="title">Title Case</option>
-                    <option value="upper">UPPERCASE</option>
-                    <option value="lower">lowercase</option>
-                  </Select>
-                </div>
-                <div>
-                  <p className="mb-2 text-sm font-semibold text-slate-700">Export Format</p>
-                  <Select
-                    value={config.export_format}
-                    onChange={(event) => setConfig((current) => ({ ...current, export_format: event.target.value }))}
-                  >
-                    <option value="xlsx">XLSX</option>
-                    <option value="csv">CSV</option>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <p className="mb-2 text-sm font-semibold text-slate-700">Split Output By</p>
-                  <Select
-                    value={config.split_column || ""}
-                    onChange={(event) => setConfig((current) => ({ ...current, split_column: event.target.value }))}
-                  >
-                    <option value="">Do not split</option>
-                    {columns
-                      .filter((column) => column.selected)
-                      .map((column) => (
-                        <option key={column.target} value={column.target.trim() || humanizeHeader(column.source)}>
-                          {column.target.trim() || humanizeHeader(column.source)}
-                        </option>
-                      ))}
-                  </Select>
-                </div>
-                <div>
-                  <p className="mb-2 text-sm font-semibold text-slate-700">Split Export Mode</p>
-                  <Select
-                    value={config.split_export_mode || "none"}
-                    onChange={(event) => setConfig((current) => ({ ...current, split_export_mode: event.target.value }))}
-                  >
-                    <option value="none">Single Output</option>
-                    <option value="separate_sheets">Separate Sheets</option>
-                    <option value="zipped_files">Zipped Files</option>
-                  </Select>
-                </div>
-              </div>
-
-              <div>
-                <p className="mb-2 text-sm font-semibold text-slate-700">Remove Rows Containing Keywords</p>
-                <Input
-                  value={keywordInput}
-                  onChange={(event) => setKeywordInput(event.target.value)}
-                  placeholder="example: cancelled, duplicate, absent"
-                />
-              </div>
-
-              {sheets.length > 1 ? (
-                <div>
-                  <p className="mb-2 text-sm font-semibold text-slate-700">Sheet</p>
-                  <Select value={sheetName} onChange={(event) => handleSheetChange(event.target.value)}>
-                    {sheets.map((sheet) => (
-                      <option key={sheet} value={sheet}>
-                        {sheet}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              ) : null}
-            </div>
-          </Card>
-        </div>
-
-        <div className="space-y-6">
-          {status.preview ? <LoadingCard title="Building preview and detecting columns..." /> : null}
-
-          {!status.preview && headerAnalysis.length ? (
-            <Card>
-              <div className="flex items-center gap-3">
-                <div className="rounded-2xl bg-amber-100 p-3 text-amber-700">
-                  <ScanSearch className="h-5 w-5" />
-                </div>
-                <div>
-                  <CardTitle>Messy Header Detection</CardTitle>
-                  <CardDescription className="mt-1">
-                    The backend normalizes rough spreadsheet headers and shows what changed.
-                  </CardDescription>
-                </div>
-              </div>
-              <div className="mt-6 space-y-3">
-                {headerAnalysis.map((header) => (
-                  <div
-                    key={`${header.original}-${header.normalized}`}
-                    className={`grid gap-3 rounded-[20px] border p-4 md:grid-cols-[1fr_auto_1fr] ${
-                      header.changed ? "border-amber-200 bg-amber-50/80" : "border-slate-200 bg-white/75"
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Original</p>
-                      <p className="mt-2 text-sm font-medium text-slate-700">{header.original}</p>
-                    </div>
-                    <div className="flex items-center justify-center text-sm font-semibold text-slate-400">-&gt;</div>
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Normalized</p>
-                      <p className="mt-2 text-sm font-medium text-slate-900">{header.normalized}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          ) : null}
-
-          {!status.preview && columns.length ? (
-            <ColumnWorkbench columns={columns} onToggle={handleToggleColumn} onRename={handleRenameColumn} />
-          ) : null}
-
-          {!status.preview && preview.length ? (
-            <PreviewTable
-              title="Source Preview"
-              description="Smooth preview of the uploaded academic dataset before transformation."
-              data={preview}
-            />
-          ) : null}
-
-          {status.processing ? <LoadingCard title="Applying cleaning rules and writing export..." /> : null}
-
-          {resultPreview.length ? (
-            <PreviewTable
-              title="Processed Preview"
-              description="Final transformed output based on the active cleaning and column rules."
-              data={resultPreview}
-            />
-          ) : null}
-
-          <Card>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <CardTitle>Export Stage</CardTitle>
-                <CardDescription className="mt-1">
-                  Run the workbench once the preview, cleaning rules, final headers, and reusable preset look right.
-                </CardDescription>
-              </div>
-              <div className="rounded-2xl bg-slate-950 p-3 text-white">
-                <WandSparkles className="h-5 w-5" />
-              </div>
-            </div>
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <div className="rounded-[22px] border border-slate-200 bg-white/75 p-4">
-                <p className="text-sm text-slate-500">Selected columns</p>
-                <p className="mt-2 font-display text-3xl font-bold text-slate-950">
-                  {columns.filter((column) => column.selected).length}
-                </p>
-              </div>
-              <div className="rounded-[22px] border border-slate-200 bg-white/75 p-4">
-                <p className="text-sm text-slate-500">Output format</p>
-                <p className="mt-2 font-display text-3xl font-bold uppercase text-slate-950">
-                  {config.export_format}
-                </p>
-              </div>
-            </div>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Button onClick={handleRun} disabled={!fileMeta || status.processing}>
-                {status.processing ? "Processing..." : "Generate Export"}
-              </Button>
-              {job ? (
-                <a href={buildDownloadUrl(job.id)}>
-                  <Button variant="outline">
-                    <Download className="mr-2 h-4 w-4" />
-                    Download {job.format}
-                  </Button>
-                </a>
-              ) : null}
-            </div>
-          </Card>
-        </div>
-      </div>
+      <SortMachineWorkbench
+        activeSteps={activeSteps}
+        error={error}
+        notice={notice}
+        uploadSectionRef={uploadSectionRef}
+        cleanSectionRef={cleanSectionRef}
+        columnsSectionRef={columnsSectionRef}
+        exportSectionRef={exportSectionRef}
+        highlightSection={highlightSection}
+        fileMeta={fileMeta}
+        status={status}
+        handleUpload={handleUpload}
+        handleUseSample={handleUseSample}
+        sortMachineTemplates={sortMachineTemplates}
+        selectedTemplateName={selectedTemplateName}
+        setSelectedTemplateName={setSelectedTemplateName}
+        selectedTemplate={selectedTemplate}
+        columns={columns}
+        includeSerialNumber={includeSerialNumber}
+        handleToggleSerialNumber={handleToggleSerialNumber}
+        handleAddHeading={handleAddHeading}
+        handleApplyTemplate={handleApplyTemplate}
+        handleResetWorkbench={handleResetWorkbench}
+        templateNameInput={templateNameInput}
+        setTemplateNameInput={setTemplateNameInput}
+        handleSaveTemplate={handleSaveTemplate}
+        removedKeywordCount={removedKeywordCount}
+        currentSheetLabel={currentSheetLabel}
+        selectedColumnsCount={selectedColumnsCount}
+        splitTargetLabel={splitTargetLabel}
+        splitModeLabel={splitModeLabel}
+        config={config}
+        setConfig={setConfig}
+        keywordInput={keywordInput}
+        setKeywordInput={setKeywordInput}
+        sheets={sheets}
+        sheetName={sheetName}
+        handleSheetChange={handleSheetChange}
+        headerAnalysis={headerAnalysis}
+        preview={quickPreviewRows}
+        filters={filters}
+        filterOptions={filterOptions}
+        activeFilters={activeFilters}
+        deletedRowIds={deletedRowIds}
+        fullPreviewRows={fullPreviewRows}
+        fullPreviewTotalRows={fullPreviewTotalRows}
+        fullPreviewHasMore={fullPreviewHasMore}
+        visibleFullPreviewColumns={visibleFullPreviewColumns}
+        shapedFullPreview={shapedFullPreview}
+        handleToggleColumn={handleToggleColumn}
+        handleRenameColumn={handleRenameColumn}
+        handleFilterChange={handleFilterChange}
+        handleAddFilter={handleAddFilter}
+        handleRemoveFilter={handleRemoveFilter}
+        handleDeleteRow={handleDeleteRow}
+        handleResetPreviewEdits={handleResetPreviewEdits}
+        handleLoadFullPreview={handleLoadFullPreview}
+        openGuide={openGuide}
+        resultPreview={resultPreview}
+        job={job}
+        handleRun={handleRun}
+      />
     </div>
   );
 }

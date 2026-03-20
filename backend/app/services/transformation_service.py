@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from app.models.schemas import SortMachineRequest
-from app.services.mapping_service import align_to_columns
+from app.services.splitter_service import apply_splitter_filters
 from app.utils.dataframe_utils import drop_fully_blank_rows
 
 
@@ -15,6 +15,28 @@ def _standardize_series(series: pd.Series, mode: str) -> pd.Series:
     if mode == "lower":
         return series.astype(str).str.lower()
     return series.astype(str).str.title()
+
+
+def _prepare_export_dataframe(df: pd.DataFrame, export_columns) -> pd.DataFrame:
+    if not export_columns:
+        return df.reset_index(drop=True)
+
+    prepared = pd.DataFrame(index=df.index)
+    for position, definition in enumerate(export_columns, start=1):
+        heading = str(definition.target or "").strip() or f"Column {position}"
+
+        if definition.kind == "serial_number":
+            prepared[heading] = range(1, len(df.index) + 1)
+            continue
+
+        if definition.kind == "blank":
+            prepared[heading] = ""
+            continue
+
+        source = str(definition.source or "").strip()
+        prepared[heading] = df[source].values if source in df.columns else ""
+
+    return prepared.reset_index(drop=True)
 
 
 def transform_dataset(df: pd.DataFrame, config: SortMachineRequest) -> pd.DataFrame:
@@ -33,12 +55,28 @@ def transform_dataset(df: pd.DataFrame, config: SortMachineRequest) -> pd.DataFr
     if config.remove_blank_rows:
         transformed = drop_fully_blank_rows(transformed)
 
+    if config.filters:
+        transformed = apply_splitter_filters(transformed, config.filters)
+
     if config.remove_keywords:
         keywords = [keyword.lower() for keyword in config.remove_keywords]
         mask = transformed.astype(str).apply(
             lambda col: ~col.str.lower().str.contains("|".join(keywords), na=False)
         )
         transformed = transformed[mask.all(axis=1)]
+
+    if config.excluded_row_ids:
+        excluded = {int(row_id) for row_id in config.excluded_row_ids}
+        transformed = transformed.loc[~transformed.index.isin(excluded)]
+
+    if config.sort_by and config.sort_by in transformed.columns:
+        transformed = transformed.assign(
+            __sort_key=transformed[config.sort_by].fillna("").astype(str).str.casefold()
+        ).sort_values(
+            by="__sort_key",
+            ascending=config.sort_direction != "desc",
+            kind="mergesort",
+        ).drop(columns="__sort_key")
 
     for rule in config.replace_rules:
         if rule.column in transformed.columns:
@@ -63,6 +101,6 @@ def transform_dataset(df: pd.DataFrame, config: SortMachineRequest) -> pd.DataFr
         transformed = transformed.rename(columns=rename_map)
 
     if config.export_columns:
-        transformed = align_to_columns(transformed, config.export_columns)
+        transformed = _prepare_export_dataframe(transformed, config.export_columns)
 
     return transformed.reset_index(drop=True)

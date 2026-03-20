@@ -8,6 +8,7 @@ import { AdmissionSplitterPage } from "@/pages/AdmissionSplitterPage";
 import { ClientDeskPage } from "@/pages/ClientDeskPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { ExportHistoryPage } from "@/pages/ExportHistoryPage";
+import { LookupFillPage } from "@/pages/LookupFillPage";
 import { NYSCSorterPage } from "@/pages/NYSCSorterPage";
 import { RulesPage } from "@/pages/RulesPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -32,6 +33,7 @@ function App() {
         <Route path="/client-desk" element={<ClientDeskPage />} />
         <Route path="/admission-splitter" element={<AdmissionSplitterPage />} />
         <Route path="/nysc-sorter" element={<NYSCSorterPage />} />
+        <Route path="/lookup-fill" element={<LookupFillPage />} />
         <Route path="/admission-confirmation" element={<AdmissionConfirmationPage />} />
         <Route path="/sort-machine" element={<SortMachinePage />} />
         <Route path="/templates" element={<TemplatesPage />} />

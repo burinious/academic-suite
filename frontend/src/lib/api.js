@@ -165,6 +165,19 @@ export async function saveTemplate(name, data) {
   return response.json();
 }
 
+export async function deleteTemplate(name) {
+  const response = await apiFetch(`/presets/templates/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Could not delete template.");
+  }
+
+  return response.json();
+}
+
 export function getRules() {
   return request("/presets/rules", rules);
 }
@@ -200,20 +213,55 @@ export async function uploadSampleFile() {
 export async function getFileSheets(fileId) {
   const response = await apiFetch(`/files/${fileId}/sheets`);
   if (!response.ok) {
-    throw new Error("Could not load sheets.");
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Could not load sheets.");
   }
   return response.json();
 }
 
-export async function getFilePreview(fileId, sheetName) {
+export async function getFilePreview(fileId, sheetName, options = {}) {
+  const params = new URLSearchParams();
+  if (sheetName) {
+    params.set("sheet_name", sheetName);
+  }
+  if (options.headerRow !== undefined && options.headerRow !== null && options.headerRow !== "") {
+    params.set("header_row", options.headerRow);
+  }
+  if (options.limit !== undefined && options.limit !== null && options.limit !== "") {
+    params.set("limit", options.limit);
+  }
+  if (options.offset !== undefined && options.offset !== null && options.offset !== "") {
+    params.set("offset", options.offset);
+  }
+  if (options.filters?.length) {
+    params.set("filters", JSON.stringify(options.filters));
+  }
+  if (options.sortBy) {
+    params.set("sort_by", options.sortBy);
+  }
+  if (options.sortDirection) {
+    params.set("sort_direction", options.sortDirection);
+  }
+
+  const response = await apiFetch(`/files/${fileId}/preview?${params.toString()}`);
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Could not load preview.");
+  }
+  return response.json();
+}
+
+export async function getFileStructure(fileId, sheetName) {
   const params = new URLSearchParams();
   if (sheetName) {
     params.set("sheet_name", sheetName);
   }
 
-  const response = await apiFetch(`/files/${fileId}/preview?${params.toString()}`);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await apiFetch(`/files/${fileId}/structure${suffix}`);
   if (!response.ok) {
-    throw new Error("Could not load preview.");
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Could not inspect file structure.");
   }
   return response.json();
 }
@@ -229,6 +277,74 @@ export async function runSortMachine(payload) {
 
   if (!response.ok) {
     throw new Error("Sort Machine run failed.");
+  }
+
+  return response.json();
+}
+
+export async function runAdmissionSplitter(payload) {
+  const response = await apiFetch("/modules/splitter/run", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Admission Splitter run failed.");
+  }
+
+  return response.json();
+}
+
+export async function materializeAdmissionSplitterWorkspace(payload) {
+  const response = await apiFetch("/modules/splitter/materialize", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Could not turn the current workspace into a new upload.");
+  }
+
+  return response.json();
+}
+
+export async function runLookupFill(payload) {
+  const response = await apiFetch("/modules/lookup-fill/run", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "VLOOKUP Fill run failed.");
+  }
+
+  return response.json();
+}
+
+export async function runRecordSorter(payload) {
+  const response = await apiFetch("/modules/nysc-sorter/run", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || "Record Sorter run failed.");
   }
 
   return response.json();

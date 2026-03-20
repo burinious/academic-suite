@@ -33,6 +33,15 @@ def save_template(name: str, data: dict) -> dict:
     return {"name": display_name, "path": str(path)}
 
 
+def delete_template(name: str) -> dict:
+    display_name = name.strip() or "Preset"
+    path = _preset_path(TEMPLATES_DIR, _safe_name(display_name))
+    if not path.exists():
+        raise FileNotFoundError("Template not found.")
+    path.unlink()
+    return {"name": display_name, "deleted": True}
+
+
 def list_templates() -> list[dict]:
     saved = []
     for file_path in TEMPLATES_DIR.glob("*.json"):

@@ -4,14 +4,17 @@ from fastapi import APIRouter
 
 from app.models.schemas import (
     AdmissionConfirmationRequest,
+    LookupFillRequest,
     NYSCSorterRequest,
     SortMachineRequest,
     SplitterRequest,
+    SplitterWorkspaceRequest,
 )
 from app.services.confirmation_service import run_admission_confirmation
+from app.services.lookup_service import run_lookup_fill
 from app.services.nysc_service import run_nysc_sorter
 from app.services.sort_machine_service import run_sort_machine
-from app.services.splitter_service import run_splitter
+from app.services.splitter_service import materialize_splitter_workspace, run_splitter
 
 router = APIRouter(prefix="/modules", tags=["modules"])
 
@@ -21,9 +24,19 @@ async def run_splitter_job(payload: SplitterRequest) -> dict:
     return run_splitter(payload)
 
 
+@router.post("/splitter/materialize")
+async def materialize_splitter_workspace_job(payload: SplitterWorkspaceRequest) -> dict:
+    return materialize_splitter_workspace(payload)
+
+
 @router.post("/nysc-sorter/run")
 async def run_nysc_sorter_job(payload: NYSCSorterRequest) -> dict:
     return run_nysc_sorter(payload)
+
+
+@router.post("/lookup-fill/run")
+async def run_lookup_fill_job(payload: LookupFillRequest) -> dict:
+    return run_lookup_fill(payload)
 
 
 @router.post("/admission-confirmation/run")

@@ -10,6 +10,11 @@ export function UploadDropzone({
   onUseSample,
   selectedFileName,
   loading = false,
+  compact = false,
+  accept = ".csv,.xlsx,.xls",
+  selectLabel = "Select File",
+  showSampleAction = true,
+  sampleLabel = "Use Sample Dataset",
 }) {
   const inputRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -23,11 +28,11 @@ export function UploadDropzone({
   return (
     <Card className="soft-grid border-dashed">
       <div
-        className={`flex flex-col items-center justify-center rounded-[22px] border px-6 py-12 text-center transition ${
+        className={`flex flex-col items-center justify-center rounded-[22px] border px-6 text-center transition ${
           isDragging
             ? "border-sky-300 bg-sky-50/90 shadow-glow"
             : "border-white/60 bg-white/70"
-        }`}
+        } ${compact ? "py-8" : "py-12"}`}
         onDragOver={(event) => {
           event.preventDefault();
           setIsDragging(true);
@@ -40,35 +45,37 @@ export function UploadDropzone({
         }}
       >
         <div className="rounded-full bg-sky-100 p-4 text-sky-700">
-          <UploadCloud className="h-8 w-8" />
+          <UploadCloud className={compact ? "h-6 w-6" : "h-8 w-8"} />
         </div>
-        <h3 className="mt-5 font-display text-xl font-semibold text-slate-950">{title}</h3>
-        <p className="mt-2 max-w-lg text-sm text-slate-500">{subtitle}</p>
+        <h3 className={`font-display font-semibold text-slate-950 ${compact ? "mt-4 text-lg leading-8" : "mt-5 text-xl"}`}>{title}</h3>
+        <p className={`max-w-lg text-slate-500 ${compact ? "mt-2 text-[13px] leading-6" : "mt-2 text-sm"}`}>{subtitle}</p>
         {selectedFileName ? (
-          <div className="mt-4 flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-4 py-2 text-sm font-medium text-slate-700">
+          <div className={`flex items-center gap-2 rounded-full border border-slate-200 bg-white/90 px-4 py-2 text-sm font-medium text-slate-700 ${compact ? "mt-3" : "mt-4"}`}>
             <FileSpreadsheet className="h-4 w-4 text-sky-700" />
             {selectedFileName}
           </div>
         ) : null}
-        <p className="mt-3 text-xs font-medium uppercase tracking-[0.24em] text-slate-400">
+        <p className={`text-xs font-medium uppercase tracking-[0.24em] text-slate-400 ${compact ? "mt-3" : "mt-3"}`}>
           Drag and drop or browse
         </p>
-        <div className="mt-6 flex flex-wrap justify-center gap-3">
+        <div className={`flex flex-wrap justify-center gap-3 ${compact ? "mt-5" : "mt-6"}`}>
           <input
             ref={inputRef}
             type="file"
-            accept=".csv,.xlsx,.xls"
+            accept={accept}
             className="hidden"
             onChange={(event) => {
               handleFile(event.target.files?.[0]);
             }}
           />
           <Button disabled={loading} onClick={() => inputRef.current?.click()}>
-            {loading ? "Uploading..." : "Select File"}
+            {loading ? "Uploading..." : selectLabel}
           </Button>
-          <Button disabled={loading} variant="outline" onClick={onUseSample}>
-            Use Sample Dataset
-          </Button>
+          {showSampleAction ? (
+            <Button disabled={loading} variant="outline" onClick={onUseSample}>
+              {sampleLabel}
+            </Button>
+          ) : null}
         </div>
       </div>
     </Card>
