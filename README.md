@@ -96,6 +96,29 @@ Backend URL:
 http://127.0.0.1:8000
 ```
 
+### Deploy Backend To Render
+
+This backend can run on Render as a Python web service.
+
+The repo now includes a root-level `render.yaml` blueprint with:
+
+- `pip install -r backend/requirements.txt` as the build command
+- `uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend` as the start command
+- a persistent disk mounted at `/var/data`
+
+Important Render environment variables:
+
+- `CORS_ALLOWED_ORIGINS=https://your-frontend-domain.onrender.com`
+- `SESSION_COOKIE_SECURE=true`
+- `SESSION_COOKIE_SAMESITE=none`
+- `APP_STORAGE_DIR=/var/data/storage`
+
+Notes:
+
+- If you use the local FastAPI auth flow from a different frontend domain, you need `SESSION_COOKIE_SECURE=true` and `SESSION_COOKIE_SAMESITE=none` so the browser will send the auth cookie cross-site.
+- Uploaded files, exports, templates, users, and sessions are filesystem-backed. On Render, they should live on the mounted disk, not the ephemeral app filesystem.
+- If you use Firebase auth instead of local cookie auth, still set `CORS_ALLOWED_ORIGINS` so browser requests from the frontend origin are accepted.
+
 Firebase backend config:
 
 ```bash

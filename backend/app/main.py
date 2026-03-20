@@ -10,9 +10,11 @@ from app.api.routes.exports import router as exports_router
 from app.api.routes.files import router as files_router
 from app.api.routes.modules import router as modules_router
 from app.api.routes.presets import router as presets_router
+from app.utils.config import get_cors_allowed_origins
 from app.utils.constants import ensure_storage_dirs
 
 ensure_storage_dirs()
+CORS_ALLOWED_ORIGINS = get_cors_allowed_origins()
 
 app = FastAPI(
     title="Academic Data Processing Suite API",
@@ -22,7 +24,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_origin_regex=r"https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],

@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: academic-data-processing-suite-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: APP_STORAGE_DIR
+        value: /var/data/storage
+      - key: SESSION_COOKIE_SECURE
+        value: true
+      - key: SESSION_COOKIE_SAMESITE
+        value: none
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+    disk:
+      name: backend-storage
+      mountPath: /var/data
+      sizeGB: 1

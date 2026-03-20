@@ -22,17 +22,19 @@ from app.services.auth_service import (
     try_get_user_by_session_token,
 )
 from app.services.firebase_auth_service import is_firebase_auth_enabled, verify_firebase_token
+from app.utils.config import get_session_cookie_samesite, get_session_cookie_secure
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
+    cookie_secure = get_session_cookie_secure()
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
         httponly=True,
-        samesite="lax",
-        secure=False,
+        samesite=get_session_cookie_samesite(),
+        secure=cookie_secure,
         max_age=SESSION_DURATION_DAYS * 24 * 60 * 60,
         path="/",
     )
@@ -77,5 +79,10 @@ async def me(
 async def logout(response: Response, session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME)) -> Response:
     clear_session(session_token)
     response.status_code = status.HTTP_204_NO_CONTENT
-    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        secure=get_session_cookie_secure(),
+        samesite=get_session_cookie_samesite(),
+    )
     return response

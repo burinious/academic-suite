@@ -1,7 +1,6 @@
-from pathlib import Path
+from app.utils.config import get_storage_dir
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-STORAGE_DIR = BASE_DIR / "storage"
+STORAGE_DIR = get_storage_dir()
 UPLOADS_DIR = STORAGE_DIR / "uploads"
 EXPORTS_DIR = STORAGE_DIR / "exports"
 PRESETS_DIR = STORAGE_DIR / "presets"
